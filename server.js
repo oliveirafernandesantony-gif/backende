@@ -102,7 +102,7 @@ const app = express();
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: "32kb" }));
 
-const adminPath = path.join(__dirname, "..", "admin");
+const adminPath = path.join(__dirname, "admin");
 if (fs.existsSync(adminPath)) app.use("/admin", express.static(adminPath));
 
 app.get("/", (_req, res) => {
