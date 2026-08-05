@@ -11,6 +11,9 @@ const crypto = require("crypto");
 
 const PORT = process.env.PORT || 3847;
 const ADMIN_KEY = process.env.ADMIN_KEY || "mude-esta-chave-agora";
+// Tokens ficam em arquivo JSON.
+// No Render: crie um Persistent Disk e defina DB_PATH=/var/data/licenses.json
+// Assim os tokens NÃO somem a cada deploy.
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, "licenses.json");
 
 function loadDb() {
@@ -262,22 +265,96 @@ app.get("/api/admin/tokens", requireAdmin, (_req, res) => {
   res.json({ ok: true, tokens: db.tokens.map(tokenPayload).reverse() });
 });
 
-app.post("/api/admin/tokens", requireAdmin, (req, res) => {
-  const body = req.body || {};
-  const qty = Math.min(50, Math.max(1, Number(body.quantity) || 1));
-  const note = String(body.note || "").slice(0, 200);
-
-  // Prioridade: durationSeconds > days (aceita decimal)
-  let durationMs = null;
+function parseDurationMs(body) {
   if (body.durationSeconds !== undefined && body.durationSeconds !== null) {
     const secs = Number(body.durationSeconds);
-    if (secs > 0) durationMs = secs * 1000;
-  } else if (body.days !== undefined && body.days !== null) {
+    if (secs > 0) return secs * 1000;
+  }
+  if (body.days !== undefined && body.days !== null) {
     const daysNum = Number(body.days);
-    if (daysNum > 0) durationMs = daysNum * 86400000;
+    if (daysNum > 0) return daysNum * 86400000;
+  }
+  return null;
+}
+
+/** Normaliza código de token digitado (maiúsculas, trim). */
+function normalizeTokenCode(raw) {
+  return String(raw || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "");
+}
+
+/**
+ * Cria tokens aleatórios OU recria/restaura um token fixo (editável).
+ *
+ * Body:
+ * - note: nome do cliente (ex: "LUCAS")
+ * - token / customToken: código fixo opcional (ex: "LM-AAAA-BBBB-CCCC")
+ *   Se o código já existir → atualiza (reativa, nota, validade) — cliente continua com o mesmo token
+ *   Se não existir → cria com esse código
+ * - quantity: qtd (ignorado se customToken)
+ * - durationSeconds / days: validade
+ * - keepDevices: true para não limpar dispositivos ao restaurar (default false ao restaurar)
+ */
+app.post("/api/admin/tokens", requireAdmin, (req, res) => {
+  const body = req.body || {};
+  const note = String(body.note || "").slice(0, 200);
+  const durationMs = parseDurationMs(body);
+  const expiresAt = durationMs ? new Date(Date.now() + durationMs).toISOString() : null;
+  const custom = normalizeTokenCode(body.token || body.customToken || "");
+
+  // ----- Token fixo / restaurar (licença editável) -----
+  if (custom) {
+    if (custom.length < 6) {
+      return res.status(400).json({ ok: false, error: "Código do token muito curto" });
+    }
+    let row = db.tokens.find((t) => t.token === custom);
+    let restored = false;
+
+    if (row) {
+      restored = true;
+      row.status = "active";
+      if (note) row.note = note;
+      if (expiresAt) row.expires_at = expiresAt;
+      else if (body.permanent === true) row.expires_at = null;
+      // Por padrão ao recriar/restaurar, libera dispositivos para o cliente reativar
+      if (body.keepDevices !== true) {
+        row.device_id = null;
+        row.devices = [];
+        row.activated_at = null;
+      }
+      addLog("restore", `Token ${custom} restaurado/atualizado · nota="${row.note || ""}"`);
+    } else {
+      row = {
+        id: db.nextId++,
+        token: custom,
+        status: "active",
+        device_id: null,
+        devices: [],
+        expires_at: expiresAt,
+        note,
+        created_at: nowISO(),
+        last_seen_at: null,
+        activated_at: null
+      };
+      db.tokens.push(row);
+      addLog("generate", `Token fixo ${custom} criado · nota="${note}"`);
+    }
+
+    saveDb(db);
+    return res.json({
+      ok: true,
+      restored,
+      tokens: [tokenPayload(row)],
+      message: restored
+        ? "Token já existia — atualizado e reativado. O cliente continua com o mesmo código."
+        : "Token fixo criado. Guarde o código; se o banco apagar, é só recriar o mesmo."
+    });
   }
 
-  const expiresAt = durationMs ? new Date(Date.now() + durationMs).toISOString() : null;
+  // ----- Geração aleatória em lote -----
+  const qty = Math.min(50, Math.max(1, Number(body.quantity) || 1));
   const created = [];
 
   for (let i = 0; i < qty; i++) {
@@ -303,9 +380,63 @@ app.post("/api/admin/tokens", requireAdmin, (req, res) => {
     created.push(tokenPayload(row));
   }
 
-  addLog("generate", `${qty} token(s) gerado(s)${expiresAt ? ` · expira ${expiresAt}` : " · permanente"}`);
+  addLog(
+    "generate",
+    `${qty} token(s) gerado(s)${note ? ` · ${note}` : ""}${expiresAt ? ` · expira ${expiresAt}` : " · permanente"}`
+  );
   saveDb(db);
   res.json({ ok: true, tokens: created });
+});
+
+/** Importa vários tokens de uma vez (CSV/lista) — útil após wipe do disco */
+app.post("/api/admin/tokens/import", requireAdmin, (req, res) => {
+  const body = req.body || {};
+  const items = Array.isArray(body.tokens) ? body.tokens : [];
+  if (!items.length) {
+    return res.status(400).json({ ok: false, error: "Envie tokens: [{ token, note, days }]" });
+  }
+
+  const out = [];
+  for (const item of items.slice(0, 200)) {
+    const code = normalizeTokenCode(item.token || item.code);
+    if (!code || code.length < 6) continue;
+    const note = String(item.note || item.name || "").slice(0, 200);
+    let durationMs = null;
+    if (item.durationSeconds) durationMs = Number(item.durationSeconds) * 1000;
+    else if (item.days) durationMs = Number(item.days) * 86400000;
+    const expiresAt = durationMs ? new Date(Date.now() + durationMs).toISOString() : item.expiresAt || null;
+
+    let row = db.tokens.find((t) => t.token === code);
+    if (row) {
+      row.status = "active";
+      if (note) row.note = note;
+      if (expiresAt) row.expires_at = expiresAt;
+      if (body.keepDevices !== true) {
+        row.device_id = null;
+        row.devices = [];
+        row.activated_at = null;
+      }
+    } else {
+      row = {
+        id: db.nextId++,
+        token: code,
+        status: "active",
+        device_id: null,
+        devices: [],
+        expires_at: expiresAt,
+        note,
+        created_at: nowISO(),
+        last_seen_at: null,
+        activated_at: null
+      };
+      db.tokens.push(row);
+    }
+    out.push(tokenPayload(row));
+  }
+
+  addLog("import", `${out.length} token(s) importados/restaurados`);
+  saveDb(db);
+  res.json({ ok: true, tokens: out, count: out.length });
 });
 
 app.patch("/api/admin/tokens/:id", requireAdmin, (req, res) => {
@@ -408,5 +539,7 @@ app.listen(PORT, () => {
   console.log(`\n✅ Live Max License Server v3 em http://localhost:${PORT}`);
   console.log(`   Painel: http://localhost:${PORT}/admin/`);
   console.log(`   ADMIN_KEY: ${ADMIN_KEY}`);
-  console.log(`   MAX_DEVICES: ${MAX_DEVICES} (PC + celular no mesmo token)\n`);
+  console.log(`   MAX_DEVICES: ${MAX_DEVICES} (PC + celular no mesmo token)`);
+  console.log(`   DB_PATH: ${DB_PATH}`);
+  console.log(`   (No Render use disco persistente + DB_PATH=/var/data/licenses.json)\n`);
 });

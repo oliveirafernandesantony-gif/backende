@@ -752,11 +752,24 @@
       <!-- GENERATE -->
       <div class="card">
         <div class="card-header">
-          <div class="card-title">✨ Gerar novos tokens</div>
+          <div class="card-title">✨ Gerar / restaurar licenças</div>
         </div>
+        <p style="font-size:12px;opacity:.75;margin:0 0 12px;line-height:1.4">
+          <b>Licença editável:</b> preencha <b>Nome do cliente</b> (ex.: LUCAS) e, se quiser, um
+          <b>código fixo</b> do token. Se o banco apagar no deploy, é só gerar de novo com o
+          <b>mesmo código</b> — o cliente continua usando o token que já tem.
+        </p>
         <div class="gen-grid">
           <div class="input-group">
-            <label>Qtd</label>
+            <label>Nome / Cliente</label>
+            <input type="text" id="genNote" placeholder="Ex: LUCAS" />
+          </div>
+          <div class="input-group" style="grid-column: span 2">
+            <label>Código fixo do token (opcional)</label>
+            <input type="text" id="genCustomToken" placeholder="Ex: LM-LUCAS-2026-0001 (vazio = gerar aleatório)" autocomplete="off" spellcheck="false" />
+          </div>
+          <div class="input-group">
+            <label>Qtd (aleatório)</label>
             <input type="number" id="genQty" value="1" min="1" max="50" />
           </div>
           <div class="input-group">
@@ -776,16 +789,22 @@
             <input type="number" id="genSecs" value="0" min="0" max="59" />
           </div>
           <div class="input-group">
-            <label>Nota / Cliente</label>
-            <input type="text" id="genNote" placeholder="Ex: João — plano mensal" />
-          </div>
-          <div class="input-group">
             <label>&nbsp;</label>
-            <button class="btn-primary" id="genBtn">Gerar</button>
+            <button class="btn-primary" id="genBtn">Gerar / Restaurar</button>
           </div>
         </div>
         <p class="msg" id="genMsg"></p>
         <div id="genResult" class="gen-result hidden"></div>
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.08)">
+          <div class="card-title" style="font-size:13px;margin-bottom:8px">📥 Restaurar lista (após apagar tokens)</div>
+          <textarea id="importBox" rows="3" placeholder="Um por linha: TOKEN,NOME&#10;LM-AAAA-BBBB-CCCC,LUCAS&#10;LM-XXXX-YYYY-ZZZZ,MARIA" style="width:100%;box-sizing:border-box;border-radius:8px;padding:8px;font-family:monospace;font-size:12px;background:#0c0a12;color:#e2e8f0;border:1px solid rgba(255,255,255,.12)"></textarea>
+          <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input type="number" id="importDays" value="30" min="0" title="Dias de validade" style="width:80px" />
+            <span style="font-size:12px;opacity:.7">dias de validade</span>
+            <button class="btn-secondary btn-sm" id="importBtn">Importar / Restaurar</button>
+          </div>
+          <p class="msg" id="importMsg"></p>
+        </div>
       </div>
 
       <!-- TOKENS TABLE -->
@@ -1336,43 +1355,40 @@
       }
     };
 
-    // Generate
+    // Generate / restore token fixo
     $("genBtn").onclick = async () => {
       const qty = Number($("genQty").value) || 1;
       const secs = getDurationSeconds();
-      const days = secs / 86400; // mantém compatibilidade
+      const days = secs / 86400;
       const note = $("genNote").value.trim();
+      const customToken = ($("genCustomToken") && $("genCustomToken").value || "").trim();
 
-      $("genMsg").textContent = "Gerando...";
+      $("genMsg").textContent = customToken ? "Restaurando / salvando..." : "Gerando...";
       $("genMsg").className = "msg";
 
       try {
-        let result;
-        // Tenta com durationSeconds primeiro
-        try {
-          result = await api("POST", "/api/admin/tokens", {
-            quantity: qty,
-            durationSeconds: secs,
-            days: days,
-            note
-          });
-        } catch {
-          // Fallback clássico
-          result = await api("POST", "/api/admin/tokens", {
-            quantity: qty,
-            days: days || 0,
-            note
-          });
-        }
+        const payload = {
+          quantity: customToken ? 1 : qty,
+          durationSeconds: secs,
+          days: days,
+          note
+        };
+        if (customToken) payload.token = customToken;
 
+        const result = await api("POST", "/api/admin/tokens", payload);
         const tokens = result.tokens || [];
         $("genMsg").className = "msg ok";
-        $("genMsg").textContent = `${tokens.length} token(s) gerado(s)!`;
+        $("genMsg").textContent = result.message ||
+          (result.restored
+            ? "Token restaurado — cliente mantém o mesmo código"
+            : `${tokens.length} token(s) gerado(s)!`);
 
         const box = $("genResult");
         box.classList.remove("hidden");
         box.innerHTML = tokens.map(t =>
-          `<div class="token-line"><span data-token="${t.token}">${t.token}</span></div>`
+          `<div class="token-line"><span data-token="${t.token}">${t.token}</span>` +
+          (t.note ? ` <small style="opacity:.7">· ${t.note}</small>` : "") +
+          `</div>`
         ).join("");
 
         box.querySelectorAll("[data-token]").forEach(el => {
@@ -1382,8 +1398,8 @@
           };
         });
 
-        log(`Gerados ${tokens.length} token(s)`, "ok");
-        toast(`${tokens.length} token(s) gerado(s)`, "success");
+        log(result.restored ? `Restaurado ${tokens[0] && tokens[0].token}` : `Gerados ${tokens.length}`, "ok");
+        toast(result.restored ? "Token restaurado" : `${tokens.length} token(s) gerado(s)`, "success");
         await loadAll();
       } catch (e) {
         $("genMsg").className = "msg err";
@@ -1392,6 +1408,43 @@
         toast(e.message, "error");
       }
     };
+
+    // Import / restore lista
+    if ($("importBtn")) {
+      $("importBtn").onclick = async () => {
+        const raw = ($("importBox").value || "").trim();
+        if (!raw) {
+          toast("Cole a lista de tokens", "error");
+          return;
+        }
+        const days = Number($("importDays").value) || 30;
+        const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        const tokens = [];
+        for (const line of lines) {
+          const parts = line.split(/[,;\t]/).map(p => p.trim()).filter(Boolean);
+          if (!parts.length) continue;
+          tokens.push({ token: parts[0], note: parts[1] || "", days });
+        }
+        if (!tokens.length) {
+          toast("Nenhum token válido na lista", "error");
+          return;
+        }
+        $("importMsg").textContent = "Importando...";
+        $("importMsg").className = "msg";
+        try {
+          const result = await api("POST", "/api/admin/tokens/import", { tokens });
+          $("importMsg").className = "msg ok";
+          $("importMsg").textContent = `${result.count || 0} token(s) restaurados`;
+          toast(`${result.count || 0} restaurados`, "success");
+          log(`Import: ${result.count}`, "ok");
+          await loadAll();
+        } catch (e) {
+          $("importMsg").className = "msg err";
+          $("importMsg").textContent = e.message;
+          toast(e.message, "error");
+        }
+      };
+    }
 
     // Export CSV
     $("exportCsvBtn").onclick = () => {
