@@ -8,6 +8,12 @@ const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
+let webpush = null;
+try {
+  webpush = require("web-push");
+} catch (e) {
+  console.warn("[push] web-push não instalado — rode: npm install web-push");
+}
 
 const PORT = process.env.PORT || 3847;
 const ADMIN_KEY = process.env.ADMIN_KEY || "mude-esta-chave-agora";
@@ -23,6 +29,7 @@ function loadDb() {
       if (!Array.isArray(data.logs)) data.logs = [];
       if (!data.nextId) data.nextId = 1;
       if (!Array.isArray(data.tokens)) data.tokens = [];
+      if (!Array.isArray(data.pushSubscriptions)) data.pushSubscriptions = [];
       data.tokens.forEach((row) => {
         if (!Array.isArray(row.devices)) row.devices = [];
         if (row.device_id && !row.devices.some((d) => d && d.id === row.device_id)) {
@@ -39,7 +46,7 @@ function loadDb() {
   } catch (e) {
     console.error("[db]", e.message);
   }
-  return { nextId: 1, tokens: [], logs: [] };
+  return { nextId: 1, tokens: [], logs: [], pushSubscriptions: [] };
 }
 
 function saveDb(db) {
@@ -218,6 +225,70 @@ function doValidate(token, deviceId, deviceType) {
     }
   };
 }
+
+
+// ========== WEB PUSH ==========
+const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY || "BJlg0lEx0x7bs2B61BN7mlooYPbHv_3svXtLMiT43wV_faEoRa-Bw51CfuYWaWMhr1vJgwCncjDLeY8jWjN91PE";
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY || "l_OMaFOT3SO4pOkfxpQscoRFCIwiU4_ueT2BGOs56uU";
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:livemax@local";
+
+if (webpush && VAPID_PUBLIC && VAPID_PRIVATE) {
+  try {
+    webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC, VAPID_PRIVATE);
+    console.log("[push] VAPID configurado");
+  } catch (e) {
+    console.warn("[push] VAPID inválido:", e.message);
+  }
+}
+
+function ensurePushList(dbObj) {
+  if (!Array.isArray(dbObj.pushSubscriptions)) dbObj.pushSubscriptions = [];
+  return dbObj.pushSubscriptions;
+}
+
+async function sendPushToToken(token, payload) {
+  if (!webpush) return { sent: 0, error: "web-push não instalado" };
+  const clean = String(token || "").trim().toUpperCase();
+  if (!clean) return { sent: 0, error: "token obrigatório" };
+  const list = ensurePushList(db);
+  const subs = list.filter((s) => s.token === clean);
+  if (!subs.length) return { sent: 0, error: "nenhuma inscrição para este token" };
+
+  const body = typeof payload === "string" ? payload : JSON.stringify(payload || {});
+  let sent = 0;
+  const keep = [];
+  const allOthers = list.filter((s) => s.token !== clean);
+
+  for (const sub of subs) {
+    try {
+      await webpush.sendNotification(
+        {
+          endpoint: sub.endpoint,
+          keys: sub.keys
+        },
+        body,
+        { TTL: 60 * 60 }
+      );
+      sent++;
+      sub.last_seen_at = nowISO();
+      keep.push(sub);
+    } catch (err) {
+      const code = err && (err.statusCode || err.status);
+      // 404/410 = inscrição expirada — remove
+      if (code === 404 || code === 410) {
+        console.log("[push] removendo inscrição expirada", sub.endpoint.slice(-20));
+      } else {
+        console.warn("[push] falha", code || err.message);
+        keep.push(sub);
+      }
+    }
+  }
+
+  db.pushSubscriptions = allOthers.concat(keep);
+  saveDb(db);
+  return { sent, total: subs.length };
+}
+
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -535,11 +606,102 @@ app.delete("/api/admin/logs", requireAdmin, (_req, res) => {
   res.json({ ok: true });
 });
 
+
+// ----- Web Push API -----
+app.get("/api/push/vapidPublicKey", (_req, res) => {
+  res.json({ ok: true, publicKey: VAPID_PUBLIC });
+});
+
+app.post("/api/push/subscribe", (req, res) => {
+  try {
+    const body = req.body || {};
+    const token = String(body.token || "").trim().toUpperCase();
+    const deviceId = String(body.deviceId || "").trim().slice(0, 128);
+    const sub = body.subscription;
+    if (!token || !sub || !sub.endpoint || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) {
+      return res.status(400).json({ ok: false, error: "token e subscription completos são obrigatórios" });
+    }
+    // Token precisa existir e estar válido
+    const row = db.tokens.find((t) => t.token === token);
+    if (!row) return res.status(200).json({ ok: false, error: "Token inválido" });
+    if (row.status === "revoked") return res.status(200).json({ ok: false, error: "Token revogado" });
+    if (isExpired(row)) return res.status(200).json({ ok: false, error: "Token expirado" });
+
+    const list = ensurePushList(db);
+    const idx = list.findIndex((s) => s.endpoint === sub.endpoint);
+    const entry = {
+      token,
+      deviceId: deviceId || null,
+      endpoint: sub.endpoint,
+      keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth },
+      created_at: idx >= 0 ? list[idx].created_at : nowISO(),
+      last_seen_at: nowISO()
+    };
+    if (idx >= 0) list[idx] = entry;
+    else list.push(entry);
+    // limite por token
+    const forToken = list.filter((s) => s.token === token);
+    if (forToken.length > 5) {
+      const sorted = forToken.sort((a, b) => String(a.last_seen_at).localeCompare(String(b.last_seen_at)));
+      const remove = new Set(sorted.slice(0, forToken.length - 5).map((s) => s.endpoint));
+      db.pushSubscriptions = list.filter((s) => s.token !== token || !remove.has(s.endpoint));
+    }
+    saveDb(db);
+    addLog("push_subscribe", `Token ${token} · device ${deviceId || "?"}`);
+    res.json({ ok: true, message: "Inscrição salva — notificações ativas neste aparelho" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ ok: false, error: "Erro interno" });
+  }
+});
+
+app.post("/api/push/unsubscribe", (req, res) => {
+  try {
+    const endpoint = (req.body || {}).endpoint;
+    if (!endpoint) return res.status(400).json({ ok: false, error: "endpoint obrigatório" });
+    const list = ensurePushList(db);
+    db.pushSubscriptions = list.filter((s) => s.endpoint !== endpoint);
+    saveDb(db);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: "Erro interno" });
+  }
+});
+
+/** Chamado pela extensão (ou app) quando há venda */
+app.post("/api/push/notify", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const token = String(body.token || "").trim().toUpperCase();
+    if (!token) return res.status(400).json({ ok: false, error: "token obrigatório" });
+
+    const row = db.tokens.find((t) => t.token === token);
+    if (!row || row.status === "revoked" || isExpired(row)) {
+      return res.status(200).json({ ok: false, error: "Token inválido" });
+    }
+
+    const title = String(body.title || "Live Max — Nova venda").slice(0, 100);
+    const msg = String(body.body || body.message || "Você teve uma venda").slice(0, 200);
+    const result = await sendPushToToken(token, {
+      title,
+      body: msg,
+      url: body.url || "/",
+      tag: body.tag || "livemax-sale"
+    });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error("[push/notify]", err);
+    res.status(500).json({ ok: false, error: "Erro ao enviar push" });
+  }
+});
+
+
 app.listen(PORT, () => {
   console.log(`\n✅ Live Max License Server v3 em http://localhost:${PORT}`);
   console.log(`   Painel: http://localhost:${PORT}/admin/`);
   console.log(`   ADMIN_KEY: ${ADMIN_KEY}`);
   console.log(`   MAX_DEVICES: ${MAX_DEVICES} (PC + celular no mesmo token)`);
   console.log(`   DB_PATH: ${DB_PATH}`);
+  console.log(`   Web Push: ${webpush ? "ativo" : "OFF (npm i web-push)"}`);
   console.log(`   (No Render use disco persistente + DB_PATH=/var/data/licenses.json)\n`);
 });

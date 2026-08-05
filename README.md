@@ -75,3 +75,23 @@ LM-XXXX-YYYY-ZZZZ,MARIA
 e clicar **Importar / Restaurar**.
 
 **Dica:** use disco persistente no Render (`DB_PATH=/var/data/licenses.json`) para os tokens não sumirem.
+
+
+## Web Push (notificação no celular com app fechado)
+
+1. No Render, Build Command:
+   ```
+   npm install
+   ```
+2. Variáveis opcionais (já tem chave padrão no código):
+   - `VAPID_PUBLIC_KEY`
+   - `VAPID_PRIVATE_KEY`
+   - `VAPID_SUBJECT` (ex: mailto:voce@email.com)
+
+3. No celular (site): Config → **Ativar notificações**
+4. Extensão 3.1.8+ envia push a cada venda
+
+Endpoints:
+- `GET /api/push/vapidPublicKey`
+- `POST /api/push/subscribe` `{ token, deviceId, subscription }`
+- `POST /api/push/notify` `{ token, title, body }`

@@ -796,12 +796,23 @@
         <p class="msg" id="genMsg"></p>
         <div id="genResult" class="gen-result hidden"></div>
         <div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.08)">
-          <div class="card-title" style="font-size:13px;margin-bottom:8px">📥 Restaurar lista (após apagar tokens)</div>
-          <textarea id="importBox" rows="3" placeholder="Um por linha: TOKEN,NOME&#10;LM-AAAA-BBBB-CCCC,LUCAS&#10;LM-XXXX-YYYY-ZZZZ,MARIA" style="width:100%;box-sizing:border-box;border-radius:8px;padding:8px;font-family:monospace;font-size:12px;background:#0c0a12;color:#e2e8f0;border:1px solid rgba(255,255,255,.12)"></textarea>
+          <div class="card-title" style="font-size:13px;margin-bottom:8px">📥 Importar / restaurar tokens</div>
+          <p style="font-size:11px;opacity:.7;margin:0 0 8px;line-height:1.4">
+            Use o <b>CSV exportado</b> do painel (botão ⬇ Exportar CSV) ou cole linhas
+            <code>TOKEN,NOME</code>. Assim você recupera os clientes depois de um deploy que apagou a lista.
+          </p>
+          <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <label class="btn-secondary btn-sm" style="cursor:pointer;margin:0">
+              📄 Escolher arquivo CSV
+              <input type="file" id="importFile" accept=".csv,text/csv,text/plain" style="display:none" />
+            </label>
+            <span id="importFileName" style="font-size:11px;opacity:.6">nenhum arquivo</span>
+          </div>
+          <textarea id="importBox" rows="3" placeholder="Ou cole aqui, um por linha:&#10;TOKEN,NOME&#10;LM-AAAA-BBBB-CCCC,LUCAS&#10;LM-XXXX-YYYY-ZZZZ,MARIA" style="width:100%;box-sizing:border-box;border-radius:8px;padding:8px;font-family:monospace;font-size:12px;background:#0c0a12;color:#e2e8f0;border:1px solid rgba(255,255,255,.12)"></textarea>
           <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <input type="number" id="importDays" value="30" min="0" title="Dias de validade" style="width:80px" />
+            <input type="number" id="importDays" value="30" min="0" title="Dias de validade (se o CSV não tiver data)" style="width:80px" />
             <span style="font-size:12px;opacity:.7">dias de validade</span>
-            <button class="btn-secondary btn-sm" id="importBtn">Importar / Restaurar</button>
+            <button class="btn-secondary btn-sm" id="importBtn">Importar CSV / lista</button>
           </div>
           <p class="msg" id="importMsg"></p>
         </div>
@@ -1409,40 +1420,103 @@
       }
     };
 
-    // Import / restore lista
+    // Parse CSV / lista de tokens (export do painel ou TOKEN,NOME)
+    function parseTokenImportText(raw) {
+      const daysDefault = Number($("importDays") && $("importDays").value) || 30;
+      const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      const tokens = [];
+      for (const line of lines) {
+        // ignora cabeçalho do CSV exportado
+        if (/^id\s*,/i.test(line) || /^token\s*,/i.test(line) || /\bstatus\b/i.test(line) && /\btoken\b/i.test(line)) {
+          // detect header row
+          if (/token/i.test(line) && ( /status/i.test(line) || /nota/i.test(line) || /note/i.test(line) || /id/i.test(line) )) {
+            continue;
+          }
+        }
+        // CSV com aspas
+        let parts = [];
+        if (line.includes('"')) {
+          const re = /("([^"]*)"|[^,;\t]+)/g;
+          let m;
+          while ((m = re.exec(line)) !== null) {
+            parts.push((m[2] !== undefined ? m[2] : m[1]).trim());
+          }
+        } else {
+          parts = line.split(/[,;\t]/).map(p => p.trim());
+        }
+        parts = parts.filter(p => p !== "");
+        if (!parts.length) continue;
+
+        // Formatos suportados:
+        // 1) TOKEN
+        // 2) TOKEN,NOME
+        // 3) ID,TOKEN,STATUS,... (export CSV do painel)
+        let code = "";
+        let note = "";
+        const looksToken = (s) => /^LM-[A-Z0-9-]+$/i.test(s) || (s.length >= 8 && /^[A-Z0-9-]+$/i.test(s));
+        if (looksToken(parts[0]) && parts.length <= 3) {
+          code = parts[0];
+          note = parts[1] || "";
+        } else {
+          // procura coluna que parece token
+          const idx = parts.findIndex(looksToken);
+          if (idx === -1) continue;
+          code = parts[idx];
+          // nota costuma ser depois do token ou coluna "note"
+          note = parts[idx + 1] && !looksToken(parts[idx + 1]) && !/^(active|revoked|expired)$/i.test(parts[idx + 1])
+            ? parts[idx + 1]
+            : (parts[parts.length - 1] && !looksToken(parts[parts.length - 1]) ? parts[parts.length - 1] : "");
+          if (/^(active|revoked|expired)$/i.test(note)) note = "";
+        }
+        if (!code) continue;
+        tokens.push({ token: code.toUpperCase(), note: String(note).slice(0, 200), days: daysDefault });
+      }
+      return tokens;
+    }
+
+    async function runTokenImport(raw) {
+      if (!raw || !raw.trim()) {
+        toast("Cole a lista ou escolha um CSV", "error");
+        return;
+      }
+      const tokens = parseTokenImportText(raw);
+      if (!tokens.length) {
+        toast("Nenhum token válido encontrado no arquivo/texto", "error");
+        return;
+      }
+      $("importMsg").textContent = "Importando " + tokens.length + "...";
+      $("importMsg").className = "msg";
+      try {
+        const result = await api("POST", "/api/admin/tokens/import", { tokens });
+        $("importMsg").className = "msg ok";
+        $("importMsg").textContent = (result.count || 0) + " token(s) restaurados";
+        toast((result.count || 0) + " restaurados", "success");
+        log("Import: " + result.count, "ok");
+        await loadAll();
+      } catch (e) {
+        $("importMsg").className = "msg err";
+        $("importMsg").textContent = e.message;
+        toast(e.message, "error");
+      }
+    }
+
+    if ($("importFile")) {
+      $("importFile").onchange = function () {
+        const f = this.files && this.files[0];
+        if (!f) return;
+        if ($("importFileName")) $("importFileName").textContent = f.name;
+        const reader = new FileReader();
+        reader.onload = function () {
+          $("importBox").value = String(reader.result || "");
+          toast("CSV carregado — clique em Importar", "success");
+        };
+        reader.readAsText(f);
+      };
+    }
+
     if ($("importBtn")) {
       $("importBtn").onclick = async () => {
-        const raw = ($("importBox").value || "").trim();
-        if (!raw) {
-          toast("Cole a lista de tokens", "error");
-          return;
-        }
-        const days = Number($("importDays").value) || 30;
-        const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-        const tokens = [];
-        for (const line of lines) {
-          const parts = line.split(/[,;\t]/).map(p => p.trim()).filter(Boolean);
-          if (!parts.length) continue;
-          tokens.push({ token: parts[0], note: parts[1] || "", days });
-        }
-        if (!tokens.length) {
-          toast("Nenhum token válido na lista", "error");
-          return;
-        }
-        $("importMsg").textContent = "Importando...";
-        $("importMsg").className = "msg";
-        try {
-          const result = await api("POST", "/api/admin/tokens/import", { tokens });
-          $("importMsg").className = "msg ok";
-          $("importMsg").textContent = `${result.count || 0} token(s) restaurados`;
-          toast(`${result.count || 0} restaurados`, "success");
-          log(`Import: ${result.count}`, "ok");
-          await loadAll();
-        } catch (e) {
-          $("importMsg").className = "msg err";
-          $("importMsg").textContent = e.message;
-          toast(e.message, "error");
-        }
+        await runTokenImport(($("importBox").value || "").trim());
       };
     }
 
