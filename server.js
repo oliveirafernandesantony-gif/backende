@@ -1,6 +1,7 @@
 /**
  * Live Max — License Server (JSON store, zero native deps)
- * v2 — suporte a durationSeconds, addSeconds/addDays, activity log
+ * v3 — multi-dispositivo (PC + celular no mesmo token, máx. 2)
+ *     + durationSeconds, addSeconds/addDays, activity log
  */
 const express = require("express");
 const cors = require("cors");
@@ -19,6 +20,17 @@ function loadDb() {
       if (!Array.isArray(data.logs)) data.logs = [];
       if (!data.nextId) data.nextId = 1;
       if (!Array.isArray(data.tokens)) data.tokens = [];
+      data.tokens.forEach((row) => {
+        if (!Array.isArray(row.devices)) row.devices = [];
+        if (row.device_id && !row.devices.some((d) => d && d.id === row.device_id)) {
+          row.devices.push({
+            id: row.device_id,
+            type: row.device_type || "unknown",
+            activated_at: row.activated_at || row.created_at || null,
+            last_seen_at: row.last_seen_at || null
+          });
+        }
+      });
       return data;
     }
   } catch (e) {
@@ -51,6 +63,32 @@ function isExpired(row) {
   return new Date(row.expires_at).getTime() < Date.now();
 }
 
+/** Máx. dispositivos por token (PC extensão + app/celular). Override: MAX_DEVICES=2 */
+const MAX_DEVICES = Math.max(1, Number(process.env.MAX_DEVICES) || 2);
+
+/** Garante row.devices[] (migra device_id legado). */
+function ensureDevices(row) {
+  if (!Array.isArray(row.devices)) row.devices = [];
+  if (row.device_id) {
+    const exists = row.devices.some((d) => d && d.id === row.device_id);
+    if (!exists) {
+      row.devices.push({
+        id: row.device_id,
+        type: row.device_type || "unknown",
+        activated_at: row.activated_at || row.created_at || nowISO(),
+        last_seen_at: row.last_seen_at || null
+      });
+    }
+  }
+  row.device_id = row.devices.length ? row.devices[0].id : null;
+  return row.devices;
+}
+
+function findDevice(row, deviceId) {
+  ensureDevices(row);
+  return row.devices.find((d) => d && d.id === deviceId) || null;
+}
+
 function addLog(action, detail = "") {
   if (!db.logs) db.logs = [];
   db.logs.push({
@@ -64,11 +102,20 @@ function addLog(action, detail = "") {
 function tokenPayload(row) {
   const expired = isExpired(row);
   const status = row.status === "revoked" ? "revoked" : expired ? "expired" : row.status;
+  const devices = ensureDevices(row).map((d) => ({
+    id: d.id,
+    type: d.type || "unknown",
+    activatedAt: d.activated_at || null,
+    lastSeenAt: d.last_seen_at || null
+  }));
   return {
     id: row.id,
     token: row.token,
     status,
-    deviceId: row.device_id || null,
+    deviceId: devices[0]?.id || null,
+    devices,
+    deviceCount: devices.length,
+    maxDevices: MAX_DEVICES,
     expiresAt: row.expires_at || null,
     note: row.note || "",
     createdAt: row.created_at,
@@ -83,9 +130,10 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-function doValidate(token, deviceId) {
+function doValidate(token, deviceId, deviceType) {
   const cleanToken = String(token || "").trim().toUpperCase();
   const cleanDevice = String(deviceId || "").trim().slice(0, 128);
+  const cleanType = String(deviceType || "unknown").trim().slice(0, 32).toLowerCase() || "unknown";
   if (!cleanToken || !cleanDevice) {
     return { status: 400, body: { ok: false, valid: false, error: "token e deviceId são obrigatórios" } };
   }
@@ -97,16 +145,62 @@ function doValidate(token, deviceId) {
     saveDb(db);
     return { status: 200, body: { ok: true, valid: false, error: "Token expirado" } };
   }
-  if (row.device_id && row.device_id !== cleanDevice) {
-    return { status: 200, body: { ok: true, valid: false, error: "Token já está em uso em outro dispositivo" } };
+
+  const devices = ensureDevices(row);
+  let device = findDevice(row, cleanDevice);
+  let isNewSlot = false;
+  let isFirstActivation = false;
+
+  if (device) {
+    device.last_seen_at = nowISO();
+    if (cleanType !== "unknown") device.type = cleanType;
+  } else {
+    if (devices.length >= MAX_DEVICES) {
+      const slots = devices
+        .map((d) => (d.type || "?") + "…" + String(d.id).slice(-6))
+        .join(", ");
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          valid: false,
+          error:
+            "Limite de " +
+            MAX_DEVICES +
+            " dispositivos atingido (" +
+            slots +
+            "). Desvincule um no painel admin.",
+          deviceCount: devices.length,
+          maxDevices: MAX_DEVICES
+        }
+      };
+    }
+    isNewSlot = true;
+    isFirstActivation = devices.length === 0;
+    device = {
+      id: cleanDevice,
+      type: cleanType,
+      activated_at: nowISO(),
+      last_seen_at: nowISO()
+    };
+    devices.push(device);
+    if (isFirstActivation) row.activated_at = device.activated_at;
   }
-  const isFirstActivation = !row.device_id;
-  if (isFirstActivation) {
-    row.device_id = cleanDevice;
-    row.activated_at = nowISO();
-  }
+
+  row.device_id = devices[0].id;
   row.last_seen_at = nowISO();
   saveDb(db);
+
+  let message = "Token válido";
+  if (isFirstActivation) message = "Token ativado neste dispositivo";
+  else if (isNewSlot)
+    message =
+      "Dispositivo ativado (" +
+      devices.length +
+      "/" +
+      MAX_DEVICES +
+      ") — PC e celular podem usar o mesmo token";
+
   return {
     status: 200,
     body: {
@@ -114,7 +208,10 @@ function doValidate(token, deviceId) {
       valid: true,
       expiresAt: row.expires_at || null,
       firstActivation: isFirstActivation,
-      message: isFirstActivation ? "Token ativado neste dispositivo" : "Token válido"
+      deviceCount: devices.length,
+      maxDevices: MAX_DEVICES,
+      deviceType: device.type,
+      message
     }
   };
 }
@@ -142,7 +239,7 @@ app.get("/", (_req, res) => {
 
 app.post("/api/validate", (req, res) => {
   try {
-    const result = doValidate(req.body?.token, req.body?.deviceId);
+    const result = doValidate(req.body?.token, req.body?.deviceId, req.body?.deviceType);
     res.status(result.status).json(result.body);
   } catch (err) {
     console.error(err);
@@ -152,7 +249,7 @@ app.post("/api/validate", (req, res) => {
 
 app.post("/api/heartbeat", (req, res) => {
   try {
-    const result = doValidate(req.body?.token, req.body?.deviceId);
+    const result = doValidate(req.body?.token, req.body?.deviceId, req.body?.deviceType);
     res.status(result.status).json(result.body);
   } catch (err) {
     res.status(500).json({ ok: false, valid: false, error: "Erro interno" });
@@ -195,6 +292,7 @@ app.post("/api/admin/tokens", requireAdmin, (req, res) => {
       token,
       status: "active",
       device_id: null,
+      devices: [],
       expires_at: expiresAt,
       note,
       created_at: nowISO(),
@@ -252,9 +350,19 @@ app.patch("/api/admin/tokens/:id", requireAdmin, (req, res) => {
   }
 
   if (unbind === true) {
-    row.device_id = null;
-    row.activated_at = null;
-    addLog("unbind", `Token #${id} (${row.token})`);
+    if (body.unbindDeviceId) {
+      ensureDevices(row);
+      const before = row.devices.length;
+      row.devices = row.devices.filter((d) => d.id !== String(body.unbindDeviceId));
+      row.device_id = row.devices[0]?.id || null;
+      if (!row.devices.length) row.activated_at = null;
+      addLog("unbind", `Token #${id} device ${body.unbindDeviceId} (${before}→${row.devices.length})`);
+    } else {
+      row.device_id = null;
+      row.devices = [];
+      row.activated_at = null;
+      addLog("unbind", `Token #${id} (${row.token}) — todos os dispositivos`);
+    }
   }
 
   saveDb(db);
@@ -277,7 +385,10 @@ app.get("/api/admin/stats", requireAdmin, (_req, res) => {
   const total = db.tokens.length;
   const active = db.tokens.filter((t) => t.status === "active" && !isExpired(t)).length;
   const revoked = db.tokens.filter((t) => t.status === "revoked").length;
-  const bound = db.tokens.filter((t) => t.device_id).length;
+  const bound = db.tokens.filter((t) => {
+    ensureDevices(t);
+    return (t.devices && t.devices.length > 0) || !!t.device_id;
+  }).length;
   res.json({ ok: true, total, active, revoked, bound });
 });
 
@@ -294,7 +405,8 @@ app.delete("/api/admin/logs", requireAdmin, (_req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`\n✅ Live Max License Server v2 em http://localhost:${PORT}`);
+  console.log(`\n✅ Live Max License Server v3 em http://localhost:${PORT}`);
   console.log(`   Painel: http://localhost:${PORT}/admin/`);
-  console.log(`   ADMIN_KEY: ${ADMIN_KEY}\n`);
+  console.log(`   ADMIN_KEY: ${ADMIN_KEY}`);
+  console.log(`   MAX_DEVICES: ${MAX_DEVICES} (PC + celular no mesmo token)\n`);
 });
