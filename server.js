@@ -472,16 +472,44 @@ app.post("/api/admin/tokens/import", requireAdmin, (req, res) => {
     const code = normalizeTokenCode(item.token || item.code);
     if (!code || code.length < 6) continue;
     const note = String(item.note || item.name || "").slice(0, 200);
-    let durationMs = null;
-    if (item.durationSeconds) durationMs = Number(item.durationSeconds) * 1000;
-    else if (item.days) durationMs = Number(item.days) * 86400000;
-    const expiresAt = durationMs ? new Date(Date.now() + durationMs).toISOString() : item.expiresAt || null;
+
+    // Prioridade da validade:
+    // 1) expiresAt ISO explícito
+    // 2) remainingSeconds (tempo restante no momento do export)
+    // 3) durationSeconds / days (nova validade a partir de agora)
+    // 4) permanente (null)
+    let expiresAt = null;
+    if (item.expiresAt && item.expiresAt !== "permanente" && item.expiresAt !== "permanent" && item.expiresAt !== "") {
+      const parsed = new Date(item.expiresAt);
+      if (!isNaN(parsed.getTime())) expiresAt = parsed.toISOString();
+    }
+    if (!expiresAt && item.remainingSeconds != null && item.remainingSeconds !== "") {
+      const rem = Number(item.remainingSeconds);
+      if (!isNaN(rem) && rem > 0) {
+        expiresAt = new Date(Date.now() + rem * 1000).toISOString();
+      } else if (rem === 0) {
+        expiresAt = new Date().toISOString();
+      }
+    }
+    if (!expiresAt) {
+      let durationMs = null;
+      if (item.durationSeconds) durationMs = Number(item.durationSeconds) * 1000;
+      else if (item.days) durationMs = Number(item.days) * 86400000;
+      if (durationMs && durationMs > 0) expiresAt = new Date(Date.now() + durationMs).toISOString();
+    }
+    // item.permanent === true → null (sem expiração)
+    if (item.permanent === true) expiresAt = null;
 
     let row = db.tokens.find((t) => t.token === code);
     if (row) {
       row.status = "active";
       if (note) row.note = note;
-      if (expiresAt) row.expires_at = expiresAt;
+      // Sempre aplica validade vinda do import quando informada
+      if (item.expiresAt !== undefined || item.remainingSeconds !== undefined || item.durationSeconds || item.days || item.permanent === true) {
+        row.expires_at = expiresAt;
+        if (expiresAt && new Date(expiresAt).getTime() <= Date.now()) row.status = "expired";
+        else if (row.status === "expired") row.status = "active";
+      }
       if (body.keepDevices !== true) {
         row.device_id = null;
         row.devices = [];
@@ -491,7 +519,7 @@ app.post("/api/admin/tokens/import", requireAdmin, (req, res) => {
       row = {
         id: db.nextId++,
         token: code,
-        status: "active",
+        status: expiresAt && new Date(expiresAt).getTime() <= Date.now() ? "expired" : "active",
         device_id: null,
         devices: [],
         expires_at: expiresAt,
@@ -518,7 +546,7 @@ app.patch("/api/admin/tokens/:id", requireAdmin, (req, res) => {
   const body = req.body || {};
   const { status, expiresAt, note, unbind } = body;
 
-  // Renovação: addSeconds ou addDays
+  // Ajuste de tempo: addSeconds / addDays (positivo = acrescenta, negativo = diminui)
   if (body.addSeconds !== undefined || body.addDays !== undefined) {
     let addMs = 0;
     if (body.addSeconds !== undefined) {
@@ -527,14 +555,21 @@ app.patch("/api/admin/tokens/:id", requireAdmin, (req, res) => {
       addMs = Number(body.addDays) * 86400000;
     }
 
-    if (addMs > 0) {
+    if (addMs !== 0 && !isNaN(addMs)) {
       const base = row.expires_at && new Date(row.expires_at).getTime() > Date.now()
         ? new Date(row.expires_at).getTime()
         : Date.now();
-      row.expires_at = new Date(base + addMs).toISOString();
-      // Se estava expired, reativa
-      if (row.status === "expired") row.status = "active";
-      addLog("renew", `Token #${id} (${row.token}) +${Math.round(addMs / 1000)}s`);
+      const next = base + addMs;
+      // Não deixa expirar no passado se estiver só diminuindo um pouco — marca como agora se <= 0
+      if (next <= Date.now()) {
+        row.expires_at = new Date(Date.now()).toISOString();
+        row.status = "expired";
+      } else {
+        row.expires_at = new Date(next).toISOString();
+        if (row.status === "expired" && addMs > 0) row.status = "active";
+      }
+      const sign = addMs >= 0 ? "+" : "";
+      addLog(addMs >= 0 ? "renew" : "reduce", `Token #${id} (${row.token}) ${sign}${Math.round(addMs / 1000)}s`);
     }
   }
 

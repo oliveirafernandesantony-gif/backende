@@ -795,29 +795,7 @@
         </div>
         <p class="msg" id="genMsg"></p>
         <div id="genResult" class="gen-result hidden"></div>
-        <div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.08)">
-          <div class="card-title" style="font-size:13px;margin-bottom:8px">📥 Importar / restaurar tokens</div>
-          <p style="font-size:11px;opacity:.7;margin:0 0 8px;line-height:1.4">
-            Use o <b>CSV exportado</b> do painel (botão ⬇ Exportar CSV) ou cole linhas
-            <code>TOKEN,NOME</code>. Assim você recupera os clientes depois de um deploy que apagou a lista.
-          </p>
-          <div id="importDropZone" style="margin-bottom:10px;padding:14px;border:1.5px dashed rgba(167,139,250,.45);border-radius:10px;background:rgba(167,139,250,.06);text-align:center;cursor:pointer">
-            <div style="font-size:13px;margin-bottom:6px">📄 Clique ou arraste o arquivo CSV aqui</div>
-            <div style="font-size:11px;opacity:.65;margin-bottom:8px">Aceita o CSV exportado do painel ou linhas TOKEN,NOME</div>
-            <label class="btn-secondary btn-sm" style="cursor:pointer;margin:0;display:inline-block" onclick="event.stopPropagation()">
-              Escolher arquivo
-              <input type="file" id="importFile" accept=".csv,text/csv,text/plain" style="display:none" />
-            </label>
-            <div id="importFileName" style="font-size:11px;opacity:.7;margin-top:8px">nenhum arquivo selecionado</div>
-          </div>
-          <textarea id="importBox" rows="4" placeholder="Ou cole aqui, um por linha:&#10;TOKEN,NOME&#10;LM-AAAA-BBBB-CCCC,LUCAS&#10;LM-XXXX-YYYY-ZZZZ,MARIA" style="width:100%;box-sizing:border-box;border-radius:8px;padding:8px;font-family:monospace;font-size:12px;background:#0c0a12;color:#e2e8f0;border:1px solid rgba(255,255,255,.12)"></textarea>
-          <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <input type="number" id="importDays" value="30" min="0" title="Dias de validade (se o CSV não tiver data)" style="width:80px" />
-            <span style="font-size:12px;opacity:.7">dias de validade</span>
-            <button class="btn-primary btn-sm" id="importBtn">📥 Importar CSV / lista</button>
-          </div>
-          <p class="msg" id="importMsg"></p>
-        </div>
+
       </div>
 
       <!-- TOKENS TABLE -->
@@ -889,15 +867,19 @@
     </div>
   </div>
 
-  <!-- MODAL RENEW -->
+  <!-- MODAL AJUSTAR TEMPO -->
   <div class="modal-overlay" id="renewModal">
     <div class="modal">
-      <h3>⏳ Renovar token</h3>
-      <p>Adicione tempo extra à validade do token selecionado.</p>
+      <h3 id="renewModalTitle">⏳ Ajustar tempo</h3>
+      <p id="renewModalDesc">Escolha se quer <b>acrescentar</b> ou <b>diminuir</b> tempo da validade.</p>
+      <div style="display:flex;gap:8px;margin-bottom:14px">
+        <button type="button" class="btn-success btn-sm" id="renewModeAdd" style="flex:1">➕ Acrescentar</button>
+        <button type="button" class="btn-danger btn-sm" id="renewModeSub" style="flex:1;opacity:.55">➖ Diminuir</button>
+      </div>
       <div class="duration-box" style="margin-bottom:16px">
         <div class="input-group">
           <label>Dias</label>
-          <input type="number" id="renewDays" value="30" min="0" />
+          <input type="number" id="renewDays" value="1" min="0" />
         </div>
         <div class="input-group">
           <label>Horas</label>
@@ -914,7 +896,36 @@
       </div>
       <div class="modal-actions">
         <button class="btn-secondary" id="renewCancel">Cancelar</button>
-        <button class="btn-primary" id="renewConfirm">Renovar</button>
+        <button class="btn-primary" id="renewConfirm">Aplicar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL IMPORT CSV -->
+  <div class="modal-overlay" id="importModal">
+    <div class="modal" style="max-width:520px">
+      <h3>📥 Importar / restaurar tokens</h3>
+      <p style="font-size:12px;opacity:.75;line-height:1.4;margin:0 0 12px">
+        Use o CSV exportado do painel (inclui <b>tempo restante</b>) ou cole linhas
+        <code>TOKEN,NOME</code> / <code>TOKEN,NOME,SEGUNDOS_RESTANTES</code>.
+      </p>
+      <div id="importDropZone" style="margin-bottom:10px;padding:14px;border:1.5px dashed rgba(167,139,250,.45);border-radius:10px;background:rgba(167,139,250,.06);text-align:center;cursor:pointer">
+        <div style="font-size:13px;margin-bottom:6px">📄 Clique ou arraste o arquivo CSV aqui</div>
+        <label class="btn-secondary btn-sm" style="cursor:pointer;margin:0;display:inline-block" onclick="event.stopPropagation()">
+          Escolher arquivo
+          <input type="file" id="importFile" accept=".csv,text/csv,text/plain" style="display:none" />
+        </label>
+        <div id="importFileName" style="font-size:11px;opacity:.7;margin-top:8px">nenhum arquivo selecionado</div>
+      </div>
+      <textarea id="importBox" rows="5" placeholder="Ou cole aqui:&#10;TOKEN,NOME,SEGUNDOS_RESTANTES&#10;LM-AAAA-BBBB-CCCC,LUCAS,2592000" style="width:100%;box-sizing:border-box;border-radius:8px;padding:8px;font-family:monospace;font-size:12px;background:#0c0a12;color:#e2e8f0;border:1px solid rgba(255,255,255,.12)"></textarea>
+      <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="number" id="importDays" value="30" min="0" title="Usado só se o CSV não tiver tempo" style="width:80px" />
+        <span style="font-size:12px;opacity:.7">dias padrão (se CSV sem tempo)</span>
+      </div>
+      <p class="msg" id="importMsg"></p>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="importCancel">Cancelar</button>
+        <button class="btn-primary" id="importBtn">📥 Importar</button>
       </div>
     </div>
   </div>
@@ -928,8 +939,9 @@
     let allTokens = [];
     let selectedIds = new Set();
     let autoRefreshInterval = null;
-    let countdownInterval = null;
+    let renewMode = "add"; // add | sub
     let renewTargetId = null;
+    let countdownInterval = null;
     let activityLog = [];
 
     // ========== HELPERS ==========
@@ -1174,7 +1186,7 @@
             <td><div class="note-cell" title="${t.note || ""}">${t.note || "—"}</div></td>
             <td style="font-size:12px;color:var(--faint)">${fmtDate(t.createdAt)}</td>
             <td class="actions">
-              <button class="btn-warn btn-sm" data-act="renew" data-id="${t.id}" title="Renovar">+ Tempo</button>
+              <button class="btn-warn btn-sm" data-act="renew" data-id="${t.id}" title="Acrescentar ou diminuir tempo">± Tempo</button>
               ${eff === "active" || eff === "expired"
                 ? `<button class="btn-danger btn-sm" data-act="revoke" data-id="${t.id}">Revogar</button>`
                 : `<button class="btn-success btn-sm" data-act="reactivate" data-id="${t.id}">Reativar</button>`}
@@ -1282,6 +1294,11 @@
           toast("Token excluído", "success");
         } else if (act === "renew") {
           renewTargetId = id;
+          if (typeof setRenewMode === "function") setRenewMode("add");
+          $("renewDays").value = 1;
+          $("renewHours").value = 0;
+          $("renewMins").value = 0;
+          $("renewSecs").value = 0;
           $("renewModal").classList.add("open");
           return;
         }
@@ -1333,7 +1350,28 @@
       renderTable();
     };
 
-    // Renew modal
+    // Ajustar tempo (acrescentar / diminuir)
+    function setRenewMode(mode) {
+      renewMode = mode === "sub" ? "sub" : "add";
+      const addBtn = $("renewModeAdd");
+      const subBtn = $("renewModeSub");
+      if (addBtn) addBtn.style.opacity = renewMode === "add" ? "1" : ".45";
+      if (subBtn) subBtn.style.opacity = renewMode === "sub" ? "1" : ".45";
+      const title = $("renewModalTitle");
+      const desc = $("renewModalDesc");
+      if (title) title.textContent = renewMode === "add" ? "➕ Acrescentar tempo" : "➖ Diminuir tempo";
+      if (desc) desc.innerHTML = renewMode === "add"
+        ? "O tempo abaixo será <b>somado</b> à validade atual."
+        : "O tempo abaixo será <b>subtraído</b> da validade atual.";
+      const conf = $("renewConfirm");
+      if (conf) {
+        conf.textContent = renewMode === "add" ? "Acrescentar" : "Diminuir";
+        conf.className = renewMode === "add" ? "btn-primary" : "btn-danger";
+      }
+    }
+    if ($("renewModeAdd")) $("renewModeAdd").onclick = () => setRenewMode("add");
+    if ($("renewModeSub")) $("renewModeSub").onclick = () => setRenewMode("sub");
+
     $("renewCancel").onclick = () => {
       $("renewModal").classList.remove("open");
       renewTargetId = null;
@@ -1342,30 +1380,21 @@
       if (!renewTargetId) return;
       const secs = getRenewSeconds();
       if (secs <= 0) {
-        toast("Informe um tempo válido para renovar", "error");
+        toast("Informe um tempo válido", "error");
         return;
       }
-      const days = secs / 86400;
+      const signed = renewMode === "sub" ? -secs : secs;
       try {
-        // Tenta primeiro com addSeconds, depois addDays, depois fallback
-        try {
-          await api("PATCH", `/api/admin/tokens/${renewTargetId}`, { addSeconds: secs });
-        } catch {
-          try {
-            await api("PATCH", `/api/admin/tokens/${renewTargetId}`, { addDays: days });
-          } catch {
-            // Fallback: envia days arredondado (compatibilidade)
-            await api("PATCH", `/api/admin/tokens/${renewTargetId}`, { addDays: Math.ceil(days) });
-          }
-        }
-        log(`Token #${renewTargetId} renovado (+${secs}s)`, "ok");
-        toast("Token renovado com sucesso!", "success");
+        await api("PATCH", `/api/admin/tokens/${renewTargetId}`, { addSeconds: signed });
+        const label = renewMode === "sub" ? `-${secs}s` : `+${secs}s`;
+        log(`Token #${renewTargetId} tempo ajustado (${label})`, "ok");
+        toast(renewMode === "sub" ? "Tempo diminuído!" : "Tempo acrescentado!", "success");
         $("renewModal").classList.remove("open");
         renewTargetId = null;
         await loadAll();
       } catch (e) {
-        log(`Erro ao renovar: ${e.message}`, "err");
-        toast(`Erro ao renovar: ${e.message}. Pode ser necessário suporte no backend (addSeconds/addDays).`, "error");
+        log(`Erro ao ajustar tempo: ${e.message}`, "err");
+        toast(`Erro: ${e.message}`, "error");
       }
     };
 
@@ -1423,56 +1452,124 @@
       }
     };
 
-    // Parse CSV / lista de tokens (export do painel ou TOKEN,NOME)
+    // Parse CSV / lista de tokens (export do painel com tempo restante, ou TOKEN,NOME)
+    function parseCsvLine(line) {
+      let parts = [];
+      if (line.includes('"')) {
+        const re = /("([^"]*)"|[^,;\t]+)/g;
+        let m;
+        while ((m = re.exec(line)) !== null) {
+          parts.push((m[2] !== undefined ? m[2] : m[1]).trim());
+        }
+      } else {
+        parts = line.split(/[,;\t]/).map((p) => p.trim());
+      }
+      return parts.filter((p) => p !== "");
+    }
+
     function parseTokenImportText(raw) {
       const daysDefault = Number($("importDays") && $("importDays").value) || 30;
-      const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
       const tokens = [];
+      let headerCols = null;
+
       for (const line of lines) {
-        // ignora cabeçalho do CSV exportado
-        if (/^id\s*,/i.test(line) || /^token\s*,/i.test(line) || /\bstatus\b/i.test(line) && /\btoken\b/i.test(line)) {
-          // detect header row
-          if (/token/i.test(line) && ( /status/i.test(line) || /nota/i.test(line) || /note/i.test(line) || /id/i.test(line) )) {
-            continue;
-          }
-        }
-        // CSV com aspas
-        let parts = [];
-        if (line.includes('"')) {
-          const re = /("([^"]*)"|[^,;\t]+)/g;
-          let m;
-          while ((m = re.exec(line)) !== null) {
-            parts.push((m[2] !== undefined ? m[2] : m[1]).trim());
-          }
-        } else {
-          parts = line.split(/[,;\t]/).map(p => p.trim());
-        }
-        parts = parts.filter(p => p !== "");
+        const parts = parseCsvLine(line);
         if (!parts.length) continue;
 
-        // Formatos suportados:
-        // 1) TOKEN
-        // 2) TOKEN,NOME
-        // 3) ID,TOKEN,STATUS,... (export CSV do painel)
+        // Cabeçalho
+        const lower = parts.map((p) => p.toLowerCase().replace(/\s+/g, "_"));
+        if (
+          lower.includes("token") &&
+          (lower.includes("status") ||
+            lower.includes("nota") ||
+            lower.includes("note") ||
+            lower.includes("id") ||
+            lower.includes("expira_em") ||
+            lower.includes("expires_at") ||
+            lower.includes("segundos_restantes") ||
+            lower.includes("remaining_seconds"))
+        ) {
+          headerCols = lower;
+          continue;
+        }
+        if (/^id$/i.test(parts[0]) && parts.length > 1) continue;
+
+        const looksToken = (s) =>
+          /^LM-[A-Z0-9-]+$/i.test(s) || (s.length >= 8 && /^[A-Z0-9-]+$/i.test(s));
+        const looksIso = (s) =>
+          /^\d{4}-\d{2}-\d{2}/.test(s) || s === "permanente" || s === "permanent";
+        const looksNum = (s) => /^-?\d+(\.\d+)?$/.test(String(s));
+
         let code = "";
         let note = "";
-        const looksToken = (s) => /^LM-[A-Z0-9-]+$/i.test(s) || (s.length >= 8 && /^[A-Z0-9-]+$/i.test(s));
-        if (looksToken(parts[0]) && parts.length <= 3) {
+        let expiresAt = undefined;
+        let remainingSeconds = undefined;
+        let days = daysDefault;
+
+        if (headerCols) {
+          const get = (names) => {
+            for (const n of names) {
+              const i = headerCols.indexOf(n);
+              if (i >= 0 && parts[i] !== undefined) return parts[i];
+            }
+            return "";
+          };
+          code = get(["token", "código", "codigo", "code"]);
+          note = get(["nota", "note", "nome", "name", "cliente"]);
+          const exp = get(["expira_em", "expires_at", "expiresat", "expira", "validade"]);
+          const rem = get([
+            "segundos_restantes",
+            "remaining_seconds",
+            "remainingseconds",
+            "tempo_restante_s",
+            "secs_left",
+          ]);
+          if (exp && exp !== "permanente" && exp !== "permanent") expiresAt = exp;
+          if (exp === "permanente" || exp === "permanent") expiresAt = null;
+          if (rem !== "" && looksNum(rem)) remainingSeconds = Number(rem);
+        } else if (looksToken(parts[0])) {
+          // TOKEN | TOKEN,NOME | TOKEN,NOME,SEGUNDOS | TOKEN,NOME,ISO
           code = parts[0];
-          note = parts[1] || "";
+          if (parts[1] && !looksIso(parts[1]) && !looksNum(parts[1])) note = parts[1];
+          const tail = parts.slice(note ? 2 : 1);
+          for (const p of tail) {
+            if (looksIso(p)) {
+              if (p === "permanente" || p === "permanent") expiresAt = null;
+              else expiresAt = p;
+            } else if (looksNum(p) && Number(p) >= 0) {
+              remainingSeconds = Number(p);
+            }
+          }
         } else {
-          // procura coluna que parece token
           const idx = parts.findIndex(looksToken);
           if (idx === -1) continue;
           code = parts[idx];
-          // nota costuma ser depois do token ou coluna "note"
-          note = parts[idx + 1] && !looksToken(parts[idx + 1]) && !/^(active|revoked|expired)$/i.test(parts[idx + 1])
-            ? parts[idx + 1]
-            : (parts[parts.length - 1] && !looksToken(parts[parts.length - 1]) ? parts[parts.length - 1] : "");
-          if (/^(active|revoked|expired)$/i.test(note)) note = "";
+          for (let i = 0; i < parts.length; i++) {
+            if (i === idx) continue;
+            const p = parts[i];
+            if (/^(active|revoked|expired)$/i.test(p)) continue;
+            if (looksIso(p)) {
+              if (p === "permanente" || p === "permanent") expiresAt = null;
+              else expiresAt = p;
+            } else if (looksNum(p) && Number(p) > 60) {
+              // número grande provavelmente segundos restantes
+              remainingSeconds = Number(p);
+            } else if (!note && !looksToken(p)) {
+              note = p;
+            }
+          }
         }
-        if (!code) continue;
-        tokens.push({ token: code.toUpperCase(), note: String(note).slice(0, 200), days: daysDefault });
+
+        if (!code || !looksToken(code)) continue;
+        const item = {
+          token: code.toUpperCase(),
+          note: String(note || "").slice(0, 200),
+        };
+        if (expiresAt !== undefined) item.expiresAt = expiresAt;
+        if (remainingSeconds !== undefined) item.remainingSeconds = remainingSeconds;
+        if (expiresAt === undefined && remainingSeconds === undefined) item.days = days;
+        tokens.push(item);
       }
       return tokens;
     }
@@ -1484,21 +1581,28 @@
       }
       const tokens = parseTokenImportText(raw);
       if (!tokens.length) {
-        toast("Nenhum token válido encontrado no arquivo/texto", "error");
+        toast("Nenhum token válido encontrado no texto/CSV", "error");
         return;
       }
-      $("importMsg").textContent = "Importando " + tokens.length + "...";
-      $("importMsg").className = "msg";
+      if ($("importMsg")) {
+        $("importMsg").textContent = "Importando " + tokens.length + "...";
+        $("importMsg").className = "msg";
+      }
       try {
         const result = await api("POST", "/api/admin/tokens/import", { tokens });
-        $("importMsg").className = "msg ok";
-        $("importMsg").textContent = (result.count || 0) + " token(s) restaurados";
+        if ($("importMsg")) {
+          $("importMsg").className = "msg ok";
+          $("importMsg").textContent = (result.count || 0) + " token(s) restaurados (com tempo)";
+        }
         toast((result.count || 0) + " restaurados", "success");
-        log("Import: " + result.count, "ok");
+        log("Import: " + result.count + " (com validade)", "ok");
+        $("importModal") && $("importModal").classList.remove("open");
         await loadAll();
       } catch (e) {
-        $("importMsg").className = "msg err";
-        $("importMsg").textContent = e.message;
+        if ($("importMsg")) {
+          $("importMsg").className = "msg err";
+          $("importMsg").textContent = e.message;
+        }
         toast(e.message, "error");
       }
     }
@@ -1520,7 +1624,6 @@
       };
     }
 
-    // Drop zone (clique / arrastar)
     const dropZone = $("importDropZone");
     if (dropZone) {
       dropZone.onclick = (e) => {
@@ -1528,8 +1631,15 @@
         const inp = $("importFile");
         if (inp) inp.click();
       };
-      dropZone.ondragover = (e) => { e.preventDefault(); dropZone.style.borderColor = "#a78bfa"; dropZone.style.background = "rgba(167,139,250,.14)"; };
-      dropZone.ondragleave = () => { dropZone.style.borderColor = "rgba(167,139,250,.45)"; dropZone.style.background = "rgba(167,139,250,.06)"; };
+      dropZone.ondragover = (e) => {
+        e.preventDefault();
+        dropZone.style.borderColor = "#a78bfa";
+        dropZone.style.background = "rgba(167,139,250,.14)";
+      };
+      dropZone.ondragleave = () => {
+        dropZone.style.borderColor = "rgba(167,139,250,.45)";
+        dropZone.style.background = "rgba(167,139,250,.06)";
+      };
       dropZone.ondrop = (e) => {
         e.preventDefault();
         dropZone.style.borderColor = "rgba(167,139,250,.45)";
@@ -1539,53 +1649,75 @@
       };
     }
 
-    // Botão Importar no header da tabela de tokens
     if ($("importCsvHeaderBtn")) {
       $("importCsvHeaderBtn").onclick = () => {
-        const section = $("importDropZone") || $("importBox");
-        if (section) section.scrollIntoView({ behavior: "smooth", block: "center" });
-        const inp = $("importFile");
-        if (inp) setTimeout(() => inp.click(), 200);
+        if ($("importBox")) $("importBox").value = "";
+        if ($("importFileName")) $("importFileName").textContent = "nenhum arquivo selecionado";
+        if ($("importMsg")) $("importMsg").textContent = "";
+        $("importModal").classList.add("open");
       };
     }
-
+    if ($("importCancel")) {
+      $("importCancel").onclick = () => $("importModal").classList.remove("open");
+    }
     if ($("importBtn")) {
       $("importBtn").onclick = async () => {
         await runTokenImport(($("importBox").value || "").trim());
       };
     }
 
-    // Export CSV
+    // Export CSV (inclui tempo restante em segundos + data de expiração)
     $("exportCsvBtn").onclick = () => {
       const filtered = getFilteredTokens();
       if (!filtered.length) {
         toast("Nenhum token para exportar", "error");
         return;
       }
-      const headers = ["ID", "Token", "Status", "Expira em", "Dispositivos", "Nota", "Criado em"];
-      const rows = filtered.map(t => [
-        t.id,
-        t.token,
-        computeEffectiveStatus(t),
-        t.expiresAt || "permanente",
-        (t.devices&&t.devices.length ? t.devices.map(d=>(d.type||"?")+":"+d.id).join(" | ") : (t.deviceId||"")),
-        (t.note || "").replace(/"/g, '""'),
-        t.createdAt || ""
-      ]);
+      const headers = [
+        "ID",
+        "Token",
+        "Status",
+        "Expira_em",
+        "Segundos_restantes",
+        "Dispositivos",
+        "Nota",
+        "Criado_em",
+      ];
+      const rows = filtered.map((t) => {
+        let remaining = "";
+        if (t.expiresAt) {
+          const ms = new Date(t.expiresAt).getTime() - Date.now();
+          remaining = String(Math.max(0, Math.floor(ms / 1000)));
+        } else {
+          remaining = ""; // permanente
+        }
+        return [
+          t.id,
+          t.token,
+          computeEffectiveStatus(t),
+          t.expiresAt || "permanente",
+          remaining,
+          t.devices && t.devices.length
+            ? t.devices.map((d) => (d.type || "?") + ":" + d.id).join(" | ")
+            : t.deviceId || "",
+          (t.note || "").replace(/"/g, '""'),
+          t.createdAt || "",
+        ];
+      });
       const csv = [
         headers.join(","),
-        ...rows.map(r => r.map(c => `"${c}"`).join(","))
+        ...rows.map((r) => r.map((c) => `"${c}"`).join(",")),
       ].join("\n");
 
       const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `live-max-tokens-${new Date().toISOString().slice(0,10)}.csv`;
+      a.download = `live-max-tokens-${new Date().toISOString().slice(0, 10)}.csv`;
       a.click();
       URL.revokeObjectURL(url);
-      log(`CSV exportado (${filtered.length} tokens)`, "ok");
-      toast("CSV exportado!", "success");
+      log(`CSV exportado (${filtered.length} tokens, com tempo restante)`, "ok");
+      toast("CSV exportado (com tempo restante)!", "success");
     };
 
     // Auto refresh
