@@ -801,18 +801,20 @@
             Use o <b>CSV exportado</b> do painel (botão ⬇ Exportar CSV) ou cole linhas
             <code>TOKEN,NOME</code>. Assim você recupera os clientes depois de um deploy que apagou a lista.
           </p>
-          <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <label class="btn-secondary btn-sm" style="cursor:pointer;margin:0">
-              📄 Escolher arquivo CSV
+          <div id="importDropZone" style="margin-bottom:10px;padding:14px;border:1.5px dashed rgba(167,139,250,.45);border-radius:10px;background:rgba(167,139,250,.06);text-align:center;cursor:pointer">
+            <div style="font-size:13px;margin-bottom:6px">📄 Clique ou arraste o arquivo CSV aqui</div>
+            <div style="font-size:11px;opacity:.65;margin-bottom:8px">Aceita o CSV exportado do painel ou linhas TOKEN,NOME</div>
+            <label class="btn-secondary btn-sm" style="cursor:pointer;margin:0;display:inline-block" onclick="event.stopPropagation()">
+              Escolher arquivo
               <input type="file" id="importFile" accept=".csv,text/csv,text/plain" style="display:none" />
             </label>
-            <span id="importFileName" style="font-size:11px;opacity:.6">nenhum arquivo</span>
+            <div id="importFileName" style="font-size:11px;opacity:.7;margin-top:8px">nenhum arquivo selecionado</div>
           </div>
-          <textarea id="importBox" rows="3" placeholder="Ou cole aqui, um por linha:&#10;TOKEN,NOME&#10;LM-AAAA-BBBB-CCCC,LUCAS&#10;LM-XXXX-YYYY-ZZZZ,MARIA" style="width:100%;box-sizing:border-box;border-radius:8px;padding:8px;font-family:monospace;font-size:12px;background:#0c0a12;color:#e2e8f0;border:1px solid rgba(255,255,255,.12)"></textarea>
+          <textarea id="importBox" rows="4" placeholder="Ou cole aqui, um por linha:&#10;TOKEN,NOME&#10;LM-AAAA-BBBB-CCCC,LUCAS&#10;LM-XXXX-YYYY-ZZZZ,MARIA" style="width:100%;box-sizing:border-box;border-radius:8px;padding:8px;font-family:monospace;font-size:12px;background:#0c0a12;color:#e2e8f0;border:1px solid rgba(255,255,255,.12)"></textarea>
           <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <input type="number" id="importDays" value="30" min="0" title="Dias de validade (se o CSV não tiver data)" style="width:80px" />
             <span style="font-size:12px;opacity:.7">dias de validade</span>
-            <button class="btn-secondary btn-sm" id="importBtn">Importar CSV / lista</button>
+            <button class="btn-primary btn-sm" id="importBtn">📥 Importar CSV / lista</button>
           </div>
           <p class="msg" id="importMsg"></p>
         </div>
@@ -822,7 +824,8 @@
       <div class="card">
         <div class="card-header">
           <div class="card-title">🔑 Tokens</div>
-          <div class="toolbar" style="margin:0">
+          <div class="toolbar" style="margin:0;gap:8px">
+            <button class="btn-secondary btn-sm" id="importCsvHeaderBtn" title="Escolher arquivo CSV ou colar lista">📥 Importar CSV</button>
             <button class="btn-secondary btn-sm" id="exportCsvBtn">⬇ Exportar CSV</button>
           </div>
         </div>
@@ -1500,17 +1503,49 @@
       }
     }
 
+    function loadImportFile(f) {
+      if (!f) return;
+      if ($("importFileName")) $("importFileName").textContent = f.name;
+      const reader = new FileReader();
+      reader.onload = function () {
+        $("importBox").value = String(reader.result || "");
+        toast("CSV carregado — clique em Importar", "success");
+      };
+      reader.readAsText(f);
+    }
+
     if ($("importFile")) {
       $("importFile").onchange = function () {
-        const f = this.files && this.files[0];
-        if (!f) return;
-        if ($("importFileName")) $("importFileName").textContent = f.name;
-        const reader = new FileReader();
-        reader.onload = function () {
-          $("importBox").value = String(reader.result || "");
-          toast("CSV carregado — clique em Importar", "success");
-        };
-        reader.readAsText(f);
+        loadImportFile(this.files && this.files[0]);
+      };
+    }
+
+    // Drop zone (clique / arrastar)
+    const dropZone = $("importDropZone");
+    if (dropZone) {
+      dropZone.onclick = (e) => {
+        if (e.target.closest("label")) return;
+        const inp = $("importFile");
+        if (inp) inp.click();
+      };
+      dropZone.ondragover = (e) => { e.preventDefault(); dropZone.style.borderColor = "#a78bfa"; dropZone.style.background = "rgba(167,139,250,.14)"; };
+      dropZone.ondragleave = () => { dropZone.style.borderColor = "rgba(167,139,250,.45)"; dropZone.style.background = "rgba(167,139,250,.06)"; };
+      dropZone.ondrop = (e) => {
+        e.preventDefault();
+        dropZone.style.borderColor = "rgba(167,139,250,.45)";
+        dropZone.style.background = "rgba(167,139,250,.06)";
+        const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        loadImportFile(f);
+      };
+    }
+
+    // Botão Importar no header da tabela de tokens
+    if ($("importCsvHeaderBtn")) {
+      $("importCsvHeaderBtn").onclick = () => {
+        const section = $("importDropZone") || $("importBox");
+        if (section) section.scrollIntoView({ behavior: "smooth", block: "center" });
+        const inp = $("importFile");
+        if (inp) setTimeout(() => inp.click(), 200);
       };
     }
 
