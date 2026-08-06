@@ -930,6 +930,30 @@
     </div>
   </div>
 
+  <!-- MODAL MAX DEVICES -->
+  <div class="modal-overlay" id="maxDevModal">
+    <div class="modal" style="max-width:380px">
+      <h3>📱 Dispositivos do token</h3>
+      <p style="font-size:12px;opacity:.75;margin:0 0 12px;line-height:1.4">
+        Defina quantos aparelhos podem usar este token ao mesmo tempo
+        (ex.: 2 = PC + celular, 3 = PC + 2 celulares). Máximo 20.
+      </p>
+      <p id="maxDevTokenLabel" style="font-family:monospace;font-size:12px;color:#a78bfa;margin:0 0 12px"></p>
+      <div class="input-group" style="margin-bottom:14px">
+        <label>Limite de dispositivos</label>
+        <input type="number" id="maxDevInput" value="2" min="1" max="20" style="width:100%" />
+      </div>
+      <p style="font-size:11px;opacity:.6;margin:0 0 12px">
+        Dispositivos já vinculados: <span id="maxDevCurrent">0</span>.
+        Se o limite for menor que os vinculados, os extras continuam até desvincular.
+      </p>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="maxDevCancel">Cancelar</button>
+        <button class="btn-primary" id="maxDevConfirm">Salvar limite</button>
+      </div>
+    </div>
+  </div>
+
   <!-- TOASTS -->
   <div class="toast-container" id="toastContainer"></div>
 
@@ -941,6 +965,7 @@
     let autoRefreshInterval = null;
     let renewMode = "add"; // add | sub
     let renewTargetId = null;
+    let maxDevTargetId = null;
     let countdownInterval = null;
     let activityLog = [];
 
@@ -1187,6 +1212,7 @@
             <td style="font-size:12px;color:var(--faint)">${fmtDate(t.createdAt)}</td>
             <td class="actions">
               <button class="btn-warn btn-sm" data-act="renew" data-id="${t.id}" title="Acrescentar ou diminuir tempo">± Tempo</button>
+              <button class="btn-secondary btn-sm" data-act="maxdev" data-id="${t.id}" title="Limite de dispositivos">📱 ${t.maxDevices||2}</button>
               ${eff === "active" || eff === "expired"
                 ? `<button class="btn-danger btn-sm" data-act="revoke" data-id="${t.id}">Revogar</button>`
                 : `<button class="btn-success btn-sm" data-act="reactivate" data-id="${t.id}">Reativar</button>`}
@@ -1301,6 +1327,22 @@
           $("renewSecs").value = 0;
           $("renewModal").classList.add("open");
           return;
+        } else if (act === "maxdev") {
+          maxDevTargetId = id;
+          const tok = allTokens.find((t) => t.id === id);
+          if ($("maxDevTokenLabel")) {
+            $("maxDevTokenLabel").textContent = tok ? tok.token : ("#" + id);
+          }
+          if ($("maxDevInput")) {
+            $("maxDevInput").value = (tok && tok.maxDevices) ? tok.maxDevices : 2;
+          }
+          if ($("maxDevCurrent")) {
+            $("maxDevCurrent").textContent = tok
+              ? (tok.deviceCount || (tok.devices && tok.devices.length) || 0)
+              : 0;
+          }
+          $("maxDevModal").classList.add("open");
+          return;
         }
         await loadAll();
       } catch (e) {
@@ -1371,6 +1413,29 @@
     }
     if ($("renewModeAdd")) $("renewModeAdd").onclick = () => setRenewMode("add");
     if ($("renewModeSub")) $("renewModeSub").onclick = () => setRenewMode("sub");
+
+    if ($("maxDevCancel")) {
+      $("maxDevCancel").onclick = () => {
+        $("maxDevModal").classList.remove("open");
+        maxDevTargetId = null;
+      };
+    }
+    if ($("maxDevConfirm")) {
+      $("maxDevConfirm").onclick = async () => {
+        if (!maxDevTargetId) return;
+        const n = Math.min(20, Math.max(1, Math.floor(Number($("maxDevInput").value) || 1)));
+        try {
+          await api("PATCH", `/api/admin/tokens/${maxDevTargetId}`, { maxDevices: n });
+          log(`Token #${maxDevTargetId} limite de dispositivos = ${n}`, "ok");
+          toast(`Limite atualizado: ${n} dispositivo(s)`, "success");
+          $("maxDevModal").classList.remove("open");
+          maxDevTargetId = null;
+          await loadAll();
+        } catch (e) {
+          toast(e.message, "error");
+        }
+      };
+    }
 
     $("renewCancel").onclick = () => {
       $("renewModal").classList.remove("open");

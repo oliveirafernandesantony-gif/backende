@@ -73,8 +73,15 @@ function isExpired(row) {
   return new Date(row.expires_at).getTime() < Date.now();
 }
 
-/** Máx. dispositivos por token (PC extensão + app/celular). Override: MAX_DEVICES=2 */
+/** Máx. dispositivos padrão por token (PC + celular). Override global: MAX_DEVICES=2 */
 const MAX_DEVICES = Math.max(1, Number(process.env.MAX_DEVICES) || 2);
+
+/** Limite efetivo do token (por-token max_devices ou padrão global). */
+function getMaxDevices(row) {
+  const n = row && row.max_devices != null ? Number(row.max_devices) : MAX_DEVICES;
+  if (isNaN(n) || n < 1) return MAX_DEVICES;
+  return Math.min(20, Math.max(1, Math.floor(n))); // 1..20
+}
 
 /** Garante row.devices[] (migra device_id legado). */
 function ensureDevices(row) {
@@ -125,7 +132,7 @@ function tokenPayload(row) {
     deviceId: devices[0]?.id || null,
     devices,
     deviceCount: devices.length,
-    maxDevices: MAX_DEVICES,
+    maxDevices: getMaxDevices(row),
     expiresAt: row.expires_at || null,
     note: row.note || "",
     createdAt: row.created_at,
@@ -165,7 +172,8 @@ function doValidate(token, deviceId, deviceType) {
     device.last_seen_at = nowISO();
     if (cleanType !== "unknown") device.type = cleanType;
   } else {
-    if (devices.length >= MAX_DEVICES) {
+    const maxDev = getMaxDevices(row);
+    if (devices.length >= maxDev) {
       const slots = devices
         .map((d) => (d.type || "?") + "…" + String(d.id).slice(-6))
         .join(", ");
@@ -176,12 +184,12 @@ function doValidate(token, deviceId, deviceType) {
           valid: false,
           error:
             "Limite de " +
-            MAX_DEVICES +
+            maxDev +
             " dispositivos atingido (" +
             slots +
-            "). Desvincule um no painel admin.",
+            "). Desvincule um no painel admin ou aumente o limite do token.",
           deviceCount: devices.length,
-          maxDevices: MAX_DEVICES
+          maxDevices: maxDev
         }
       };
     }
@@ -201,6 +209,7 @@ function doValidate(token, deviceId, deviceType) {
   row.last_seen_at = nowISO();
   saveDb(db);
 
+  const maxDevOk = getMaxDevices(row);
   let message = "Token válido";
   if (isFirstActivation) message = "Token ativado neste dispositivo";
   else if (isNewSlot)
@@ -208,8 +217,11 @@ function doValidate(token, deviceId, deviceType) {
       "Dispositivo ativado (" +
       devices.length +
       "/" +
-      MAX_DEVICES +
-      ") — PC e celular podem usar o mesmo token";
+      maxDevOk +
+      ") — slots: " +
+      devices.length +
+      "/" +
+      maxDevOk;
 
   return {
     status: 200,
@@ -219,7 +231,7 @@ function doValidate(token, deviceId, deviceType) {
       expiresAt: row.expires_at || null,
       firstActivation: isFirstActivation,
       deviceCount: devices.length,
-      maxDevices: MAX_DEVICES,
+      maxDevices: maxDevOk,
       deviceType: device.type,
       message
     }
@@ -584,6 +596,14 @@ app.patch("/api/admin/tokens/:id", requireAdmin, (req, res) => {
 
   if (note !== undefined) {
     row.note = String(note).slice(0, 200);
+  }
+
+  // Limite de dispositivos por token (1..20)
+  if (body.maxDevices !== undefined || body.max_devices !== undefined) {
+    const raw = body.maxDevices !== undefined ? body.maxDevices : body.max_devices;
+    const n = Math.min(20, Math.max(1, Math.floor(Number(raw) || 1)));
+    row.max_devices = n;
+    addLog("max_devices", `Token #${id} (${row.token}) limite=${n}`);
   }
 
   if (unbind === true) {
