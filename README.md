@@ -1,97 +1,52 @@
-# Live Max — License Server v3.1 (persistente)
+# Live Max — App Companheiro (PWA)
 
-## Por que os tokens somem?
+Versão inicial do aplicativo mobile da Live Max.
 
-No Render o disco do app **é apagado a cada deploy**.  
-Os tokens ficavam em `licenses.json` dentro da pasta do código → sumiam.
+## Cores
+Usa exatamente a paleta oficial da extensão **Live Max 3.0.8**.
 
-## Solução recomendada: Persistent Disk no Render
+## Como testar agora (sem Supabase ainda)
 
-1. No painel do Render → seu Web Service **backende**
-2. **Settings** → **Disks** → **Add Disk**
-   - Name: `licenses-data`
-   - Mount Path: `/var/data`
-   - Size: 1 GB (suficiente)
-3. **Environment** → Add:
-   - Key: `DB_PATH`
-   - Value: `/var/data/licenses.json`
-4. Salve e faça **Manual Deploy**
-
-A partir daí os tokens sobrevivem a deploys e restarts.
-
-## Outras variáveis
-
-| Variável | Exemplo | Função |
-|----------|---------|--------|
-| `ADMIN_KEY` | senha-forte | Acesso ao painel /admin |
-| `DB_PATH` | `/var/data/licenses.json` | Onde salvar os tokens |
-| `MAX_DEVICES` | `2` | PC + celular por token |
-| `PORT` | automático no Render | Porta HTTP |
-
-## NÃO faça
-
-- Não commite `licenses.json` no GitHub (já está no `.gitignore`)
-- Não apague o disco `/var/data` no Render
-- Não sobrescreva `licenses.json` no repositório
-
-## Backup manual
-
-No painel admin → **Exportar CSV** — salva a lista de tokens no seu PC.  
-Faça isso de vez em quando como segurança extra.
-
-## Deploy
-
-```bash
-npm install
-# local:
-ADMIN_KEY=sua-chave DB_PATH=./licenses.json node server.js
-```
-
-No Render o Start Command típico:
-```
-node server.js
-```
-(Build: `npm install`)
-
-
-## Licença editável (nome + código fixo)
-
-No painel admin você pode:
-
-1. **Nome do cliente** — ex.: `LUCAS` (campo nota)
-2. **Código fixo** — ex.: `LM-LUCAS-2026-0001`
-3. Clicar **Gerar / Restaurar**
-
-Se o banco de tokens apagar no deploy, basta **recriar com o mesmo código**.  
-O cliente continua com o token que já está na extensão/app — não precisa trocar nada.
-
-Também dá para colar uma lista:
-
-```
-LM-AAAA-BBBB-CCCC,LUCAS
-LM-XXXX-YYYY-ZZZZ,MARIA
-```
-
-e clicar **Importar / Restaurar**.
-
-**Dica:** use disco persistente no Render (`DB_PATH=/var/data/licenses.json`) para os tokens não sumirem.
-
-
-## Web Push (notificação no celular com app fechado)
-
-1. No Render, Build Command:
+1. Abra a pasta `livemax-app` no VS Code / Cursor
+2. Use a extensão **Live Server** ou rode:
+   ```bash
+   npx serve .
    ```
-   npm install
-   ```
-2. Variáveis opcionais (já tem chave padrão no código):
-   - `VAPID_PUBLIC_KEY`
-   - `VAPID_PRIVATE_KEY`
-   - `VAPID_SUBJECT` (ex: mailto:voce@email.com)
+3. No celular (mesma rede) ou no Chrome do PC, abra o endereço.
+4. Cole qualquer token com 8+ caracteres para entrar.
+5. Para simular uma live, abra o Console do navegador (F12) e rode:
 
-3. No celular (site): Config → **Ativar notificações**
-4. Extensão 3.1.8+ envia push a cada venda
+```js
+// Iniciar live
+LiveMaxApp.onLiveStart({ viewers: 128 })
 
-Endpoints:
-- `GET /api/push/vapidPublicKey`
-- `POST /api/push/subscribe` `{ token, deviceId, subscription }`
-- `POST /api/push/notify` `{ token, title, body }`
+// Registrar vendas
+LiveMaxApp.onSale({ product: "Kit Skincare", value: 89.90 })
+LiveMaxApp.onSale({ product: "Fone Bluetooth", value: 149.00 })
+
+// Atualizar espectadores
+LiveMaxApp.onViewers(256)
+
+// Alerta de risco
+LiveMaxApp.onViolation("Possível violação detectada")
+
+// Encerrar live
+LiveMaxApp.onLiveEnd()
+```
+
+## Próximos passos
+- Conectar Supabase (plano Free)
+- Extensão enviar eventos em tempo real
+- Botão "Encerrar Live" mandar comando de volta para a extensão
+- Notificações push nativas
+
+## Estrutura
+```
+livemax-app/
+├── index.html      → Telas (Login + App)
+├── styles.css      → Visual idêntico ao Live Max 3.0.8
+├── app.js          → Lógica + API pública
+├── manifest.json   → PWA instalável
+├── sw.js           → Service Worker
+└── icons/          → Ícones
+```
